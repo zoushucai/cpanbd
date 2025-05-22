@@ -13,6 +13,7 @@ nav:
     - DownFile类: more/downfile.md
     - UploadFile类: more/uploadfile.md
     - 百度秒传到123云盘: more/baiduTo123.md
+    - 接口: more/interface.md
 
 edit_uri: edit/main/docs # 编辑按钮跳转的链接
 repo_url: https://github.com/zoushucai/cpanbd # 右上角点击跳转的链接

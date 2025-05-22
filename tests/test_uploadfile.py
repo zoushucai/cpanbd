@@ -16,3 +16,7 @@ def test_upload():
         bs=32,
         show_progress=True,
     )
+
+
+if __name__ == "__main__":
+    test_upload()

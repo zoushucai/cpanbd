@@ -1,33 +1,35 @@
-from __future__ import annotations
-
+import contextvars
 import inspect
+import sys
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 
-from pydantic import validate_call
 from tenacity import RetryCallState, retry, stop_after_attempt, wait_random
 
 from .api import Api, Auth, get_api
+from .core import FieldParser
 
 # 通用装饰器:自动收集参数并调用 API
+caller_var = contextvars.ContextVar("caller_name", default="unknown")
 
 
-def auto_args_call_api(api_name: Optional[str] = None) -> Callable:
-    def decorator(func: Callable) -> Callable:
-        @validate_call
+def auto_args_call_api(arg: Union[Callable, str, None] = None) -> Callable:
+    def decorator(func: Callable, api_name: Optional[str] = None) -> Callable:
         @wraps(func)
         def wrapper(self, *args, **kwargs) -> dict:
-            # 绑定参数, 自动填充默认值
-            # print(f"调用函数: {func.__name__}")
+            func(self, *args, **kwargs)
             bound_args = inspect.signature(func).bind(self, *args, **kwargs)
             bound_args.apply_defaults()
             arguments = dict(bound_args.arguments)
             arguments.pop("self")
+            caller_var.set(func.__name__)
             return self._call_api(api_name or func.__name__, **arguments)
 
         return wrapper
 
-    return decorator
+    if callable(arg):
+        return decorator(arg)
+    return lambda func: decorator(func, api_name=arg)
 
 
 class BaseApiClient:
@@ -35,25 +37,6 @@ class BaseApiClient:
         self.auth = auth
         self.filepath = filepath
         self.API: dict[str, Any] = get_api(self.filepath)
-
-    def _merge_with_data(self, template: Any, data: dict) -> dict | None:
-        """
-        根据 template 的 key, 从 data 中提取对应的值并更新 template.
-        不会新增 key, 只更新已有的 key.
-        """
-        if not template:
-            return None
-        if not isinstance(template, dict):
-            return template
-
-        result = {}
-        # 遍历 template 的 key, 如果参数中有对应的值, 则使用参数中的值, 否则使用 template 中的值
-        for k, v in template.items():
-            if k in data.keys():
-                result[k] = data[k]
-            else:
-                result[k] = v
-        return result if result else None
 
     @retry(
         stop=stop_after_attempt(10),
@@ -70,49 +53,29 @@ class BaseApiClient:
 
         """
         api = self.API[mmkey]  # 是一个字典
-        BINARY_KEYS = ["files"]
-        [api.pop(k) for k in BINARY_KEYS if k in api]
-        url = data.pop("url", None)
-        files = data.get("files", None)
-        skip = data.get("skip", False)
+        parsed = FieldParser.parse_dict(api)
 
-        if self.auth:
-            api_instance = Api(auth=self.auth, skip=skip, **api)
-        else:
-            api_instance = Api(skip=skip, **api)
-
-        method = api_instance.method.upper()
         #### 特殊处理参数
         if data and "content_md5" in data:
             data["content-md5"] = data.pop("content_md5")
         if data and "slice_md5" in data:
             data["slice-md5"] = data.pop("slice_md5")
-        data1 = self._merge_with_data(api_instance.data, data)
-        params = self._merge_with_data(api_instance.params, data)
-        # # ###剩余的参数
+
+        checked_data = FieldParser.validate_and_fill_input(parsed, data)
+        api_instance = Api(**checked_data)
+        method = api_instance.method.upper()
         residual_params = {
             k: v
             for k, v in data.items()
             if v is not None
-            and k not in (data1 or {})
-            and k not in (params or {})
             and k not in (api_instance.params or {})
             and k not in (api_instance.data or {})
-            and k not in BINARY_KEYS
-            and k not in ["url", "URL", "skip"]
+            and k not in ["url", "URL", "skip", "files", "method"]
         }
-        # print(f"residual_params: {residual_params}")
         if residual_params:
-            raise ValueError(f"❌ 发现多余的参数: {residual_params}, 请检查 API 配置")
+            print(f"❌ 发现多余的参数: {residual_params.keys()}, 请检查 API 配置")
+            sys.exit(1)
         if method in ["GET", "POST", "PUT", "DELETE"]:
-            if data1:
-                api_instance.update_data(**data1)
-            if params:
-                api_instance.update_params(**params)
-            if files:
-                api_instance.update_files(files)
-            if url:
-                api_instance.update_url(url)
             return api_instance.result  # type: ignore
         else:
             print("----" * 10)
@@ -125,11 +88,13 @@ class BaseApiClient:
 
     @staticmethod
     def print_retry_info(retry_state: RetryCallState):
-        fn_name = retry_state.fn.__name__ if retry_state.fn is not None else "Unknown"
+        # 获取上下文中的调用者名
+        fn_name = caller_var.get()
         args = retry_state.args
         kwargs = retry_state.kwargs
         if kwargs and "files" in kwargs:
             kwargs.pop("files", None)
+
         exception = (
             retry_state.outcome.exception() if retry_state.outcome is not None else None
         )

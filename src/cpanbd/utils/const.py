@@ -1,5 +1,7 @@
 import os
+import re
 from pathlib import Path
+from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -27,4 +29,35 @@ HEADERS = {
 }
 BASE_URL = "https://pan.baidu.com"
 APPNAME = os.getenv("BAIDU_APPNAME", None)
+
 assert APPNAME, "BAIDU_APPNAME 环境变量未设置"
+
+TEMPLATE_PATTERN = re.compile(r"{{\s*([\w\.]+)\s*}}", re.IGNORECASE)
+EMBEDDED_TEMPLATE_PATTERN = re.compile(r"{{{\s*([\w\.]+)\s*}}}", re.IGNORECASE)
+TYPE_MAP = {
+    "int": int,
+    "float": float,
+    "str": str,
+    "number": float,
+    "string": str,
+    "bool": bool,
+    "boolean": bool,
+    "list": list,
+    "dict": dict,
+    "object": dict,
+    "array": list,
+    "any": Any,
+    "none": type(None),
+    "null": type(None),
+}
+DEFAULT_BY_TYPE = {
+    "int": 0,
+    "float": 0.0,
+    "str": "",
+    "string": "",
+    "number": 0.0,
+    "bool": False,
+    "boolean": False,
+    "list": [],
+    "dict": {},
+}

@@ -74,7 +74,8 @@ class UploadFile:
         Raises:
             Exception: 如果上传失败或 MD5 校验不一致.
         """
-        files = [("file", ("part", chunk))]
+        files = {"file": ("part", chunk)}
+        # files = [("file", ("part", chunk))]
         res = self.up.upload(
             url=server_url + "/rest/2.0/pcs/superfile2",
             path=upload_path,

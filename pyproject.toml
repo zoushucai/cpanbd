@@ -1,7 +1,7 @@
 [project]
 name = "cpanbd"
-version = "0.1.0"
-description = "123云盘的python接口文档(非官方)"
+version = "0.1.1"
+description = "百度云盘的python接口文档(非官方)"
 readme = "README.md"
 authors = [
     { name = "zoushucai", email = "zoushucai@users.noreply.github.com" }

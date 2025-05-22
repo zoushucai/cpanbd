@@ -432,6 +432,7 @@
 			"method": "filemetas", // 固定值
 			"access_token": "{{access_token}}", //  从Auth 类中获取
 			"fsids": "list: required", // 文件id数组, 数组中元素是uint64类型, 数组大小上限是:100
+			// "list": "required", // 文件id数组, 数组中元素是uint64类型, 数组大小上限是:100
 			"dlink": "0: int: optional", // 是否需要下载地址, 0为否, 1为是, 默认为0. 获取到dlink后
 			"path": "None: str: optional", // 目录名称绝对路径, 必须/开头；
 			"thumb": "0: int: optional", // 是否需要缩略图, 0为否, 1为是, 默认为0
@@ -439,7 +440,7 @@
 			"needmedia": "0: int: optional", // 视频是否需要展示时长信息, needmedia=1时, 返回 duration 信息时间单位为秒 (s), 转换为向上取整.
 			"detail": "0: int: optional", // 视频是否需要展示长, 宽等信息. 0 否、1 是, 默认0
 			"device_id": "None: str: optional", // 设备ID, 硬件设备必传
-			"from_apaas": "1" //
+			"from_apaas": "None: int: optional" //
 		},
 		"schema_": {
 			"type": "object",

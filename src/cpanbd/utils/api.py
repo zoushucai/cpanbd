@@ -1,18 +1,19 @@
 import importlib.resources as pkg_resources
-import os
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 import json5
 import requests
+from jsonpath import jsonpath
 from jsonschema import validate
 from pydantic import Field, TypeAdapter, dataclasses
 
 from .auth import Auth
 from .checkdata import BaseResponse, JsonInput
-from .const import BASE_URL, HEADERS
+from .const import BASE_URL, HEADERS, TEMPLATE_PATTERN
 
 
 def get_api(filepath: str, *args: Any) -> dict:
@@ -76,11 +77,12 @@ class Api:
     url: str
     data: Optional[dict] = Field(default_factory=dict)
     params: Optional[dict] = Field(default_factory=dict)
+    response_schema: Optional[dict] = Field(default_factory=dict)
     schema_: Optional[dict] = Field(default_factory=dict)
     comment: str = ""
     auth: Auth = Field(default_factory=Auth)
     headers: dict = Field(default_factory=dict)
-    files: Optional[dict] = Field(default_factory=dict)
+    files: Optional[Any] = None
     skip: bool = Field(default=False)
 
     def __post_init__(self) -> None:
@@ -89,10 +91,11 @@ class Api:
         """
         # 获取请求方法
         self.method = self.method.upper()
-        self.auth = self.auth or Auth()
-        self.data = self._replace_values(self.data) or None
-        self.params = self._replace_values(self.params) or None
+        self.data = self.data or None
+        self.params = self.params or None
+        self.response_schema = self.response_schema or None
         self.schema_ = self.schema_ or None
+        self.auth = self.auth or Auth()
         self.headers = self.headers or HEADERS.copy()
         self.files = self.files or None
 
@@ -109,6 +112,22 @@ class Api:
         setattr(self, attr, value)
         return self
 
+    def update_attr2(self) -> "Api":
+        def stringify_values(obj):
+            if isinstance(obj, dict):
+                return {
+                    k: json5.dumps(v, ensure_ascii=False, separators=(",", ":"))
+                    if isinstance(v, (dict, list))
+                    else v
+                    for k, v in obj.items()
+                }
+            return obj  # 保持原样（非 dict 不处理）
+
+        self.data = stringify_values(self.data)
+        self.params = stringify_values(self.params)
+
+        return self
+
     def update_data(self, **kwargs) -> "Api":
         return self._update_attr("data", **kwargs)
 
@@ -120,16 +139,10 @@ class Api:
         return self
 
     def update_method(self, method: str) -> "Api":
-        """
-        更新请求方法
-        """
         self.method = method.upper()
         return self
 
     def update_url(self, url: str) -> "Api":
-        """
-        更新请求 URL
-        """
         self.url = url
         return self
 
@@ -137,11 +150,46 @@ class Api:
         self.headers = kwargs
         return self
 
+    def _resolve_key_path(self, data: Any, key_path: str) -> Any:
+        """
+        解析嵌套的 key 路径，支持 {{ key }} 和 {{ key.key2 }} 的格式。
+        优先支持字典和 Auth 对象属性查找，未找到时保留原模板字符串。
+        """
+        keys = key_path.split(".")
+        val = data
+        for key in keys:
+            if isinstance(val, dict):
+                val = val.get(key)
+            elif hasattr(val, key):
+                val = getattr(val, key)
+            else:
+                return f"{{{{ {key_path} }}}}"  # fallback: 保留模板格式
+        return val if val is not None else f"{{{{ {key_path} }}}}"
+
+    def resolve_templates(self, data: Any) -> Any:
+        """
+        递归解析模板字符串，支持 {{ key }} 和 {{ a.b.c }} 格式，处理字符串、字典和列表。
+        """
+
+        def _template(string: str) -> str:
+            return TEMPLATE_PATTERN.sub(
+                lambda match: str(self._resolve_key_path(self.auth, match.group(1))),
+                string,
+            )
+
+        if isinstance(data, str):
+            return _template(data)
+        elif isinstance(data, dict):
+            return {k: self.resolve_templates(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self.resolve_templates(v) for v in data]
+        return data
+
     def _prepare_request(self) -> dict:
         """
         准备请求参数
         """
-
+        self.update_attr2()
         headers = self.headers.copy()
         if not self.files:
             headers["Content-Type"] = "application/json"
@@ -162,7 +210,11 @@ class Api:
 
         config = {k: v for k, v in config.items() if v is not None}
         if config.get("files") is not None:
+            # 如果有文件上传,则不需要设置 Content-Type
+            # 因为 requests 会自动设置
             config["headers"].pop("Content-Type", None)
+        # 解析模板
+        config = self.resolve_templates(config)
 
         return config
 
@@ -175,7 +227,7 @@ class Api:
         """
         # 处理请求参数
         config: dict = self._prepare_request()
-        for _ in range(5):
+        for _ in range(3):
             response = requests.request(**config)
             # print("response.url:", response.url)
             response.raise_for_status()
@@ -183,7 +235,6 @@ class Api:
             if code == 31034:
                 print("❌ 风控,请稍后再试")
                 time.sleep(3)
-                continue
             elif code == -1:
                 # 权益已过期
                 self.auth.refresh_access_token()
@@ -199,71 +250,66 @@ class Api:
         if self.schema_:
             res_json: dict = response.json()
             BaseResponse.model_validate(res_json)
-            validate(
-                instance=res_json,
-                schema=self.schema_,
-            )
+            validate(instance=res_json, schema=self.schema_)
+
+        if self.response_schema:
+            check = self.validate_response_schema(response, self.response_schema)
+            if check:
+                return response.json()
+            else:
+                raise ValueError("❌ 利用 response_schema 校验失败")
+
         return response.json()
 
     @property
-    def result(self) -> Union[int, str, dict, bytes, None]:
-        return self.request()
-
-    def _replace_values(self, obj: Any) -> Any:
-        if isinstance(obj, dict):
-            return {key: self._replace_values(value) for key, value in obj.items()}
-        elif isinstance(obj, list):
-            return [self._replace_values(item) for item in obj]
-        elif isinstance(obj, str):
-            return self._process_string(obj)
+    def result(self) -> dict:
+        res = self.request()
+        if isinstance(res, dict):
+            return res
         else:
-            return obj
+            raise ValueError(f"❌ 响应数据解析失败: {res}")
 
-    def _process_string(self, value: str) -> Any:
-        value = value.strip()
-        if "None" in value or "null" in value:
-            return None
+    @staticmethod
+    def validate_response_schema(response: requests.Response, schema_: dict) -> bool:
+        if not schema_:
+            return True
+        try:
+            response.raise_for_status()
+            res_json = response.json()
+        except Exception as e:
+            print(f"❌ 响应数据解析失败: {response.text}\n错误: {e}")
+            return False
 
-        # 处理可选和必需标记
-        if ": optional" in value:
-            value = value.replace(": optional", "").strip()
-        elif ": required" in value:
-            value = value.replace(": required", "").strip()
+        type_mapping = {
+            "string": str,
+            "number": (int, float),
+            "int": int,
+            "float": float,
+            "boolean": bool,
+            "bool": bool,
+            "object": dict,
+            "array": list,
+        }
 
-        # 处理类型转换
-        if value.endswith(": int"):
-            value = value.replace(": int", "").strip()
-            return int(value)
-        elif value.endswith(": str"):
-            value = value.replace(": str", "").strip()
-            return value
-        elif value.endswith(": bool"):
-            value = value.replace(": bool", "").strip()
-            return value.lower() == "true"
-        elif value.endswith(": float"):
-            value = value.replace(": float", "").strip()
-            return float(value)
-        elif value.lower() in ("null", "none"):
-            return None
+        errors = []
+        # 校验响应数据, 和普通的 jsonschema 校验不同的是,这里的 schema_ 是一个 dict
+        # 比如 { "key": "string" } 代表 key 的值是 string 类型
+        # 比如 {"key": "int"} 代表 key 的值是 int 类型
+        for k, rule in schema_.items():
+            expected_type = type_mapping.get(rule["type"])
+            actual = jsonpath(res_json, f"$..{k}")
+            if not actual:
+                errors.append(f"Key '{k}' 不存在于响应中")
+                continue
+            if expected_type and not isinstance(actual[0], expected_type):
+                errors.append(f"Key '{k}' 预期类型: {rule['type']}")
+        if errors:
+            for error in errors:
+                print(f"❌ {error}")
+            warnings.warn(f"❌ 校验失败响应: {res_json}", stacklevel=2)
+            return False
 
-        # 处理模板字符串
-        if value.startswith("{{") and value.endswith("}}"):
-            inner = value[2:-2].strip()
-            if inner.lower().startswith("env."):
-                env_key = inner[4:]
-                env_value = os.getenv(env_key)
-                if env_value is None:
-                    print(f"❌ 环境变量 `{env_key}` 不存在")
-                    sys.exit(1)
-                return env_value
-            else:
-                attr_value = getattr(self.auth, inner, None)
-                if attr_value is None:
-                    print(f"❌ API `{inner}` 不存在")
-                    sys.exit(1)
-                return attr_value
-
-        return value
+        return True
 
 
 __all__ = [

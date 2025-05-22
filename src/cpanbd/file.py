@@ -289,7 +289,7 @@ class File(BaseApiClient):
 
         """
 
-    @auto_args_call_api()
+    @auto_args_call_api
     def filemetas(
         self,
         fsids: str | list[int],
@@ -300,7 +300,7 @@ class File(BaseApiClient):
         needmedia: int = 0,
         detail: int = 0,
         device_id: Optional[str] = None,
-        from_apaas: int = 1,
+        from_apaas: Optional[int] = None,
         skip=False,
     ) -> dict[str, Any] | None:
         """查询文件信息

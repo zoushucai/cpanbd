@@ -108,33 +108,34 @@ def test_filemetas():
     fsids = [1028540724123072, 426026092779461]
     # fsids = json.dumps(fsids)
     # print(fsids)
-    res = file.filemetas(fsids=fsids, dlink=1)
+    res = file.filemetas(fsids=fsids, dlink=1, skip=True)
     print(res)
     assert res is not None, "返回结果为空"
 
 
 ##### 暂不测试
-# def test_filemanager():
-#     """
-#     测试获取分类列表
-#     """
+# #### 暂不测试
+# # # def test_filemanager():
+# #     """
+# #     测试获取分类列表
+# #     """
 
-#     fsids = [1028540724123072, 426026092779461]
-#     # fsids = json.dumps(fsids)
-#     # print(fsids)
-#     res = file.filemanager(fsids=fsids, dlink=1)
-#     print(res)
-#     assert res is not None, "返回结果为空"
+# #     fsids = [1028540724123072, 426026092779461]
+# #     # fsids = json.dumps(fsids)
+# #     # print(fsids)
+# #     res = file.filemanager(fsids=fsids, dlink=1)
+# #     print(res)
+# #     assert res is not None, "返回结果为空"
 
 
-# if __name__ == "__main__":
-#     test_file()
-#     test_listall()
-#     test_doclist()
-#     test_imagelist()
-#     test_videolist()
-#     test_btlist()
-#     test_categoryinfo()
-#     test_categorylist()
-#     test_search()
-#     test_filemetas()
+if __name__ == "__main__":
+    # test_file()
+    #     test_listall()
+    #     test_doclist()
+    #     test_imagelist()
+    #     test_videolist()
+    #     test_btlist()
+    #     test_categoryinfo()
+    #     test_categorylist()
+    #     test_search()
+    test_filemetas()
