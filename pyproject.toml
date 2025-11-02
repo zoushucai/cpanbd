@@ -1,6 +1,6 @@
 [project]
 name = "cpanbd"
-version = "0.1.1"
+version = "0.1.2"
 description = "百度云盘的python接口文档(非官方)"
 readme = "README.md"
 authors = [
